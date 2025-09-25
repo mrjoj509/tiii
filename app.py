@@ -18,7 +18,6 @@ except ImportError:
     os.system("pip install SignerPy")
     import SignerPy
 
-
 # ============================================
 # Network & Configuration
 # ============================================
@@ -72,7 +71,6 @@ class Network:
             'User-Agent': f'com.zhiliaoapp.musically/2022703020 (Linux; U; Android 7.1.2; en; SM-N975F; Build/N2G48H;tt-ok/{str(random.randint(1, 10**19))})'
         }
 
-
 # ============================================
 # MailTM disposable email
 # ============================================
@@ -119,8 +117,8 @@ class MailTM:
                                 return msg.get("text", "")
                 except Exception as e:
                     await asyncio.sleep(3)
+            print(f"[LOG] Mailbox timeout ({timeout}s)")
             return None
-
 
 # ============================================
 # MobileFlowFlexible
@@ -133,6 +131,8 @@ class MobileFlowFlexible:
         if self.net.proxy:
             self.session.proxies = {"http": self.net.proxy, "https": self.net.proxy}
         self.base_params = self.net.params.copy()
+        # generate random device_id for international numbers
+        self.base_params['device_id'] = random.randint(100000000000000, 999999999999999)
         try:
             self.base_params = SignerPy.get(params=self.base_params)
         except Exception as e:
@@ -157,7 +157,6 @@ class MobileFlowFlexible:
         variants = self._variants()
         print("Trying variants:", variants)
         for acct in variants:
-            print(f"[LOG] -> trying account_param variant: {acct[:150]}")
             for host in self.net.hosts:
                 params = self.base_params.copy()
                 ts = int(time.time())
@@ -169,7 +168,6 @@ class MobileFlowFlexible:
                 except Exception as e:
                     print(f"[LOG] SignerPy.sign failed for host {host}: {e}")
                     continue
-
                 headers = self.headers.copy()
                 headers.update({
                     'x-tt-passport-csrf-token': secrets.token_hex(16),
@@ -180,26 +178,21 @@ class MobileFlowFlexible:
                     'x-khronos': signature.get('x-khronos', ''),
                     'x-ladon': signature.get('x-ladon', ''),
                 })
-
                 url = f"https://{host}/passport/account_lookup/mobile/"
                 try:
                     resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=timeout_per_host)
                     try:
                         j = resp.json()
                     except ValueError:
-                        print(f"[{host}] non-json response (truncated): {resp.text[:300]}")
+                        print(f"[{host}] non-json response: {resp.text[:300]}")
                         continue
-
-                    # ✅ تعديل: طباعة الريسبونس كامل
-                    print(f"[{host}] FULL RESPONSE (mobile): {json.dumps(j, ensure_ascii=False)}")
-
-                    if resp.status_code != 200:
+                    print(f"[{host}] FULL RESPONSE (mobile): {json.dumps(j, ensure_ascii=False, indent=2)}")
+                    if resp.status_code != 200 or not j:
+                        print(f"[{host}] status {resp.status_code} -> response text: {resp.text[:300]}")
                         continue
-
                     accounts = j.get('data', {}).get('accounts', [])
                     if not accounts:
                         continue
-
                     first = accounts[0]
                     ticket = first.get('passport_ticket') or first.get('not_login_ticket') or None
                     username = first.get('user_name') or first.get('username') or None
@@ -207,7 +200,6 @@ class MobileFlowFlexible:
                         return ticket, acct, j
                     if username and not ticket:
                         return None, acct, j
-
                 except requests.RequestException as e:
                     print(f"[{host}] request error: {e}")
                     continue
@@ -220,7 +212,6 @@ class MobileFlowFlexible:
             print("[LOG] Failed to create mail.tm account.")
             return None, None
         print("[LOG] Created disposable mail:", mail)
-
         params = self.base_params.copy()
         ts = int(time.time())
         params['ts'] = ts
@@ -230,13 +221,11 @@ class MobileFlowFlexible:
         params['type'] = "3737"
         params.pop('fixed_mix_mode', None)
         params.pop('account_param', None)
-
         try:
             signature = SignerPy.sign(params=params)
         except Exception as e:
             print("[LOG] SignerPy.sign failed for send_code:", e)
             return None, None
-
         headers = self.headers.copy()
         headers.update({
             'x-ss-req-ticket': signature.get('x-ss-req-ticket', ''),
@@ -246,44 +235,39 @@ class MobileFlowFlexible:
             'x-khronos': signature.get('x-khronos', ''),
             'x-ladon': signature.get('x-ladon', ''),
         })
-
         for host in self.net.send_hosts:
-            url = f"https://{host}/passport/email/send_code"
-            try:
-                resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=10)
+            for attempt in range(3):  # retry 3 مرات
                 try:
-                    j = resp.json()
-                except ValueError:
-                    print(f"[send_code {host}] non-json response: {resp.text[:300]}")
-                    continue
-
-                # ✅ تعديل: طباعة الريسبونس كامل
-                print(f"[send_code {host}] FULL RESPONSE: {json.dumps(j, ensure_ascii=False)}")
-
-                if j.get("message") == "success" or j.get("status") == "success":
-                    body = await mail_client.mailbox(token, timeout=timeout_mailbox)
-                    if not body:
-                        print("[LOG] No email arrived in mailbox (timeout).")
+                    resp = await asyncio.to_thread(self.session.post, url=f"https://{host}/passport/email/send_code", params=params, headers=headers, timeout=10)
+                    try:
+                        j = resp.json()
+                    except ValueError:
+                        print(f"[send_code {host}] non-json response: {resp.text[:300]}")
+                        continue
+                    print(f"[send_code {host}] FULL RESPONSE: {json.dumps(j, ensure_ascii=False, indent=2)}")
+                    if j.get("message") == "success" or j.get("status") == "success":
+                        body = await mail_client.mailbox(token, timeout=timeout_mailbox)
+                        if not body:
+                            print(f"[LOG] No email arrived in mailbox (timeout {timeout_mailbox}s)")
+                            continue
+                        print("[LOG] Full email body:")
+                        print(body)
+                        ree = re.search(r'تم إنشاء هذا البريد الإلكتروني من أجل\s+(.+)\.', body)
+                        if ree:
+                            return ree.group(1).strip(), mail
+                        ree2 = re.search(r'username[:\s]+([A-Za-z0-9_\.]+)', body, re.IGNORECASE)
+                        if ree2:
+                            return ree2.group(1).strip(), mail
                         return None, mail
-
-                    # ✅ تعديل: طباعة الرسالة كاملة
-                    print("[LOG] Full email body:")
-                    print(body)
-
-                    ree = re.search(r'تم إنشاء هذا البريد الإلكتروني من أجل\s+(.+)\.', body)
-                    if ree:
-                        return ree.group(1).strip(), mail
-                    ree2 = re.search(r'username[:\s]+([A-Za-z0-9_\.]+)', body, re.IGNORECASE)
-                    if ree2:
-                        return ree2.group(1).strip(), mail
-                    return None, mail
-                else:
+                    else:
+                        print(f"[LOG] send_code not success, attempt {attempt+1}")
+                        time.sleep(2)
+                        continue
+                except requests.RequestException as e:
+                    print(f"[LOG] send_code request error for host {host}: {e}")
+                    time.sleep(2)
                     continue
-            except requests.RequestException as e:
-                print(f"[LOG] send_code request error for host {host}: {e}")
-                continue
         return None, mail
-
 
 # ============================================
 # Flask API
@@ -299,22 +283,17 @@ def extract():
         phone = "+" + phone
     print(f"[LOG] استعلام جديد برقم: {phone}")
     flow = MobileFlowFlexible(account_param=phone)
-
     async def run_flow():
         try:
             ticket, used_variant, resp_json = await flow.find_passport_ticket()
         except Exception as e:
             return {"status": "error", "message": str(e)}
-
         if not ticket:
             return {"status": "not_found", "used_variant": used_variant, "raw_response": resp_json}
-
         username, mail_used = await flow.send_code_using_ticket(passport_ticket=ticket, timeout_mailbox=timeout_mailbox)
         return {"status": "success" if username else "no_username", "username": username, "passport_ticket": ticket, "mail_used": mail_used, "raw_response": resp_json}
-
     result = asyncio.run(run_flow())
     return jsonify(result)
-
 
 # ============================================
 # Run Flask
