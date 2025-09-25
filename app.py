@@ -39,11 +39,18 @@ class Network:
             "api.tiktokv.com",
         ]
         self.send_hosts = [
+            "api31-normal-useast2a.tiktokv.com",
             "api22-normal-c-alisg.tiktokv.com",
+            "api2.musical.ly",
+            "api16-normal-useast5.tiktokv.us",
+            "api16-normal-no1a.tiktokv.eu",
+            "rc-verification-sg.tiktokv.com",
             "api31-normal-alisg.tiktokv.com",
-            "api22-normal-probe-useast2a.tiktokv.com",
-            "api16-normal-probe-useast2a.tiktokv.com",
-            "rc-verification-sg.tiktokv.com"
+            "api16-normal-c-useast1a.tiktokv.com",
+            "api22-normal-c-useast1a.tiktokv.com",
+            "api16-normal-c-useast1a.musical.ly",
+            "api19-normal-c-useast1a.musical.ly",
+            "api.tiktokv.com",
         ]
         self.params = {
             'device_platform': 'android',
