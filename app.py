@@ -108,7 +108,7 @@ class MailTM:
         async with aiohttp.ClientSession(headers={**self.headers, "Authorization": f"Bearer {token}"}) as session:
             total = 0
             while total < timeout:
-                await asyncio.sleep(1)  # كان 3 → صار 1 ثانية
+                await asyncio.sleep(3)  # كان 3 → صار 1 ثانية
                 total += 1
                 try:
                     async with session.get(f"{self.url}/messages") as resp:
