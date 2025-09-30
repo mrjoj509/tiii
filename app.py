@@ -23,7 +23,18 @@ except ImportError:
 # ============================================
 class Network:
     def __init__(self):
-        self.proxy = "infproxy_checkemail509:NLI8oq4ZQC2fJ3yJDcSv@proxy.infiniteproxies.com:1111"
+        # البروكسي حقك
+        proxy = "infproxy_checkemail509:NLI8oq4ZQC2fJ3yJDcSv@proxy.infiniteproxies.com:1111"
+
+        if proxy:
+            self.proxy_dict = {
+                "http": f"http://{proxy}",
+                "https": f"http://{proxy}"
+            }
+            self.proxy_str = f"http://{proxy}"  # هذا يستخدمه aiohttp
+        else:
+            self.proxy_dict = None
+            self.proxy_str = None
 
         self.hosts = [
             "api31-normal-useast2a.tiktokv.com",
