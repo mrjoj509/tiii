@@ -272,7 +272,7 @@ class MobileFlowFlexible:
         for host in self.net.send_hosts:
             url = f"https://{host}/passport/email/send_code"
             try:
-                resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=5)
+                resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=10)
                 try:
                     j = resp.json()
                 except ValueError:
