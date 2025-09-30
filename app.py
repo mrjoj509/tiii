@@ -142,22 +142,31 @@ class MobileFlowFlexible:
         self.input = account_param.strip()
         self.session = requests.Session()
         self.net = Network()
-        
-        if self.net.proxy:
-            self.session.proxies = {
-                "http": self.net.proxy,
-                "https": self.net.proxy
-            }
+
+        # التحقق من البروكسي وضبطه لجلسة requests
+        if hasattr(self.net, 'proxy') and self.net.proxy:
+            if isinstance(self.net.proxy, dict):
+                self.session.proxies = self.net.proxy
+            elif isinstance(self.net.proxy, str):
+                proxy_url = self.net.proxy
+                if not proxy_url.startswith("http://") and not proxy_url.startswith("https://"):
+                    proxy_url = "http://" + proxy_url
+                self.session.proxies = {
+                    "http": proxy_url,
+                    "https": proxy_url
+                }
 
         self.base_params = self.net.params.copy()
         try:
             self.base_params = SignerPy.get(params=self.base_params)
         except Exception as e:
             print("Warning: SignerPy.get failed:", e)
+
         self.base_params.update({
             'device_type': f'rk{random.randint(3000, 4000)}s_{uuid.uuid4().hex[:4]}',
             'language': 'AR'
         })
+
         self.headers = self.net.headers.copy()
 
     def _variants(self):
