@@ -25,7 +25,6 @@ except ImportError:
 # ============================================
 class Network:
     def __init__(self):
-        # البروكسي حقك
         proxy = "infproxy_checkemail509:NLI8oq4ZQC2fJ3yJDcSv@proxy.infiniteproxies.com:1111"
 
         if proxy:
@@ -33,7 +32,7 @@ class Network:
                 "http": f"http://{proxy}",
                 "https": f"http://{proxy}"
             }
-            self.proxy_str = f"http://{proxy}"  # هذا يستخدمه aiohttp
+            self.proxy_str = f"http://{proxy}"
         else:
             self.proxy_dict = None
             self.proxy_str = None
@@ -89,55 +88,61 @@ class Network:
         }
 
 # ============================================
-# MailTM disposable email (مع SSL context محدد)
+# GuerrillaMail disposable email
 # ============================================
-class MailTM:
+class GuerrillaMail:
     def __init__(self):
-        self.url = "https://api.mail.tm"
+        self.base = "https://api.guerrillamail.com/ajax.php"
         self.headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/json, text/javascript, */*; q=0.01"
         }
-
-        # إعداد SSL context باستخدام certifi (لتجاوز خطأ شهادة منتهية بشكل آمن)
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
 
     async def gen(self):
-        # نمرر ssl=self.ssl_context فقط للاتصال بـ api.mail.tm
+        params = {"f": "get_email_address"}
         async with aiohttp.ClientSession(headers=self.headers) as session:
             try:
-                async with session.get(f"{self.url}/domains", ssl=self.ssl_context) as resp:
-                    data = await resp.json()
-                    domain = data["hydra:member"][0]["domain"]
-                local = ''.join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(12))
-                mail = f"{local}@{domain}"
-                payload = {"address": mail, "password": local}
-                async with session.post(f"{self.url}/accounts", json=payload, ssl=self.ssl_context) as resp:
-                    await resp.json()
-                async with session.post(f"{self.url}/token", json=payload, ssl=self.ssl_context) as resp:
-                    token = await resp.json()
-                    return mail, token.get("token")
+                async with session.get(self.base, params=params, ssl=self.ssl_context) as resp:
+                    j = await resp.json()
+                    email = j.get("email_addr") or j.get("email")
+                    sid = j.get("sid_token") or j.get("sid")
+                    if email and sid:
+                        return email, sid
+                    return None, None
             except Exception as e:
-                print("mail.tm gen error:", e)
+                print("guerrilla gen error:", e)
                 return None, None
 
     async def mailbox(self, token: str, timeout: int = 120):
-        async with aiohttp.ClientSession(headers={**self.headers, "Authorization": f"Bearer {token}"}) as session:
+        async with aiohttp.ClientSession(headers=self.headers) as session:
             total = 0
+            seq = 0
             while total < timeout:
                 await asyncio.sleep(3)
                 total += 3
                 try:
-                    async with session.get(f"{self.url}/messages", ssl=self.ssl_context) as resp:
-                        inbox = await resp.json()
-                        messages = inbox.get("hydra:member", [])
-                        if messages:
-                            id = messages[0]["id"]
-                            async with session.get(f"{self.url}/messages/{id}", ssl=self.ssl_context) as r:
-                                msg = await r.json()
-                                return msg.get("text", "")
+                    params = {"f": "check_email", "sid_token": token, "seq": seq}
+                    async with session.get(self.base, params=params, ssl=self.ssl_context) as resp:
+                        j = await resp.json()
+                        msgs = j.get("list") or j.get("email_list") or []
+                        if msgs:
+                            first = msgs[0]
+                            mail_id = first.get("mail_id") or first.get("mailId") or first.get("id")
+                            if not mail_id:
+                                return None
+                            params2 = {"f": "fetch_email", "email_id": mail_id, "sid_token": token}
+                            async with session.get(self.base, params=params2, ssl=self.ssl_context) as r2:
+                                mail = await r2.json()
+                                body = (
+                                    mail.get("mail_text")
+                                    or mail.get("mail_body")
+                                    or mail.get("text")
+                                    or mail.get("mail_html")
+                                    or ""
+                                )
+                                return body
                 except Exception as e:
-                    # لو فشل قراءة مرة، ننتظر دورة ونحاول مرة ثانية
                     await asyncio.sleep(3)
             return None
 
@@ -150,7 +155,6 @@ class MobileFlowFlexible:
         self.session = requests.Session()
         self.net = Network()
 
-        # التحقق من البروكسي وضبطه لجلسة requests
         if hasattr(self.net, 'proxy') and self.net.proxy:
             if isinstance(self.net.proxy, dict):
                 self.session.proxies = self.net.proxy
@@ -217,7 +221,6 @@ class MobileFlowFlexible:
                     'x-ladon': signature.get('x-ladon', ''),
                 })
 
-                # تعديل الرابط ليكون email بدل mobile
                 url = f"https://{host}/passport/account_lookup/email/"
                 try:
                     resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=timeout_per_host)
@@ -252,10 +255,10 @@ class MobileFlowFlexible:
         return None, None, None
 
     async def send_code_using_ticket(self, passport_ticket: str, timeout_mailbox: int = 60):
-        mail_client = MailTM()
+        mail_client = GuerrillaMail()
         mail, token = await mail_client.gen()
         if not mail or not token:
-            print("[LOG] Failed to create mail.tm account.")
+            print("[LOG] Failed to create GuerrillaMail account.")
             return None, None
         print("[LOG] Created disposable mail:", mail)
 
@@ -272,7 +275,7 @@ class MobileFlowFlexible:
         try:
             signature = SignerPy.sign(params=params)
         except Exception as e:
-            print("LOG] SignerPy.sign failed for send_code:", e)
+            print("[LOG] SignerPy.sign failed for send_code:", e)
             return None, None
 
         headers = self.headers.copy()
