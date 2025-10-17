@@ -8,6 +8,8 @@ import re
 import requests
 import time
 import json
+import ssl
+import certifi
 from flask import Flask, request, jsonify
 from urllib.parse import unquote
 
@@ -87,7 +89,7 @@ class Network:
         }
 
 # ============================================
-# MailTM disposable email
+# MailTM disposable email (مع SSL context محدد)
 # ============================================
 class MailTM:
     def __init__(self):
@@ -97,18 +99,22 @@ class MailTM:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
 
+        # إعداد SSL context باستخدام certifi (لتجاوز خطأ شهادة منتهية بشكل آمن)
+        self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+
     async def gen(self):
+        # نمرر ssl=self.ssl_context فقط للاتصال بـ api.mail.tm
         async with aiohttp.ClientSession(headers=self.headers) as session:
             try:
-                async with session.get(f"{self.url}/domains") as resp:
+                async with session.get(f"{self.url}/domains", ssl=self.ssl_context) as resp:
                     data = await resp.json()
                     domain = data["hydra:member"][0]["domain"]
                 local = ''.join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(12))
                 mail = f"{local}@{domain}"
                 payload = {"address": mail, "password": local}
-                async with session.post(f"{self.url}/accounts", json=payload) as resp:
+                async with session.post(f"{self.url}/accounts", json=payload, ssl=self.ssl_context) as resp:
                     await resp.json()
-                async with session.post(f"{self.url}/token", json=payload) as resp:
+                async with session.post(f"{self.url}/token", json=payload, ssl=self.ssl_context) as resp:
                     token = await resp.json()
                     return mail, token.get("token")
             except Exception as e:
@@ -122,15 +128,16 @@ class MailTM:
                 await asyncio.sleep(3)
                 total += 3
                 try:
-                    async with session.get(f"{self.url}/messages") as resp:
+                    async with session.get(f"{self.url}/messages", ssl=self.ssl_context) as resp:
                         inbox = await resp.json()
                         messages = inbox.get("hydra:member", [])
                         if messages:
                             id = messages[0]["id"]
-                            async with session.get(f"{self.url}/messages/{id}") as r:
+                            async with session.get(f"{self.url}/messages/{id}", ssl=self.ssl_context) as r:
                                 msg = await r.json()
                                 return msg.get("text", "")
                 except Exception as e:
+                    # لو فشل قراءة مرة، ننتظر دورة ونحاول مرة ثانية
                     await asyncio.sleep(3)
             return None
 
@@ -265,7 +272,7 @@ class MobileFlowFlexible:
         try:
             signature = SignerPy.sign(params=params)
         except Exception as e:
-            print("[LOG] SignerPy.sign failed for send_code:", e)
+            print("LOG] SignerPy.sign failed for send_code:", e)
             return None, None
 
         headers = self.headers.copy()
