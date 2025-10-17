@@ -23,6 +23,7 @@ except ImportError:
 # ============================================
 class Network:
     def __init__(self):
+        # البروكسي حقك
         proxy = "infproxy_checkemail509:NLI8oq4ZQC2fJ3yJDcSv@proxy.infiniteproxies.com:1111"
 
         if proxy:
@@ -30,7 +31,7 @@ class Network:
                 "http": f"http://{proxy}",
                 "https": f"http://{proxy}"
             }
-            self.proxy_str = f"http://{proxy}"
+            self.proxy_str = f"http://{proxy}"  # هذا يستخدمه aiohttp
         else:
             self.proxy_dict = None
             self.proxy_str = None
@@ -86,37 +87,52 @@ class Network:
         }
 
 # ============================================
-# 1SecMail disposable email
+# MailTM disposable email
 # ============================================
-class OneSecMail:
+class MailTM:
     def __init__(self):
-        self.api_base = "https://www.1secmail.com/api/v1/"
+        self.url = "https://api.mail.tm"
+        self.headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
 
     async def gen(self):
-        login = ''.join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(10))
-        domain = "1secmail.com"
-        email = f"{login}@{domain}"
-        return email, login, domain
-
-    async def mailbox(self, login, domain, timeout: int = 120):
-        total = 0
-        while total < timeout:
-            await asyncio.sleep(3)
-            total += 3
+        async with aiohttp.ClientSession(headers=self.headers) as session:
             try:
-                async with aiohttp.ClientSession() as session:
-                    url = f"{self.api_base}?action=getMessages&login={login}&domain={domain}"
-                    async with session.get(url) as resp:
-                        messages = await resp.json()
-                        if messages:
-                            message_id = messages[0]["id"]
-                            url2 = f"{self.api_base}?action=readMessage&login={login}&domain={domain}&id={message_id}"
-                            async with session.get(url2) as r:
-                                msg = await r.json()
-                                return msg.get("body", "")
+                async with session.get(f"{self.url}/domains") as resp:
+                    data = await resp.json()
+                    domain = data["hydra:member"][0]["domain"]
+                local = ''.join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(12))
+                mail = f"{local}@{domain}"
+                payload = {"address": mail, "password": local}
+                async with session.post(f"{self.url}/accounts", json=payload) as resp:
+                    await resp.json()
+                async with session.post(f"{self.url}/token", json=payload) as resp:
+                    token = await resp.json()
+                    return mail, token.get("token")
             except Exception as e:
+                print("mail.tm gen error:", e)
+                return None, None
+
+    async def mailbox(self, token: str, timeout: int = 120):
+        async with aiohttp.ClientSession(headers={**self.headers, "Authorization": f"Bearer {token}"}) as session:
+            total = 0
+            while total < timeout:
                 await asyncio.sleep(3)
-        return None
+                total += 3
+                try:
+                    async with session.get(f"{self.url}/messages") as resp:
+                        inbox = await resp.json()
+                        messages = inbox.get("hydra:member", [])
+                        if messages:
+                            id = messages[0]["id"]
+                            async with session.get(f"{self.url}/messages/{id}") as r:
+                                msg = await r.json()
+                                return msg.get("text", "")
+                except Exception as e:
+                    await asyncio.sleep(3)
+            return None
 
 # ============================================
 # MobileFlowFlexible
@@ -127,11 +143,18 @@ class MobileFlowFlexible:
         self.session = requests.Session()
         self.net = Network()
 
-        if hasattr(self.net, 'proxy_str') and self.net.proxy_str:
-            proxy_url = self.net.proxy_str
-            if not proxy_url.startswith("http://") and not proxy_url.startswith("https://"):
-                proxy_url = "http://" + proxy_url
-            self.session.proxies = {"http": proxy_url, "https": proxy_url}
+        # التحقق من البروكسي وضبطه لجلسة requests
+        if hasattr(self.net, 'proxy') and self.net.proxy:
+            if isinstance(self.net.proxy, dict):
+                self.session.proxies = self.net.proxy
+            elif isinstance(self.net.proxy, str):
+                proxy_url = self.net.proxy
+                if not proxy_url.startswith("http://") and not proxy_url.startswith("https://"):
+                    proxy_url = "http://" + proxy_url
+                self.session.proxies = {
+                    "http": proxy_url,
+                    "https": proxy_url
+                }
 
         self.base_params = self.net.params.copy()
         try:
@@ -161,7 +184,9 @@ class MobileFlowFlexible:
 
     async def find_passport_ticket(self, timeout_per_host: int = 5):
         variants = self._variants()
+        print("Trying variants:", variants)
         for acct in variants:
+            print(f"[LOG] -> trying account_param variant: {acct[:150]}")
             for host in self.net.hosts:
                 params = self.base_params.copy()
                 ts = int(time.time())
@@ -171,6 +196,7 @@ class MobileFlowFlexible:
                 try:
                     signature = SignerPy.sign(params=params)
                 except Exception as e:
+                    print(f"[LOG] SignerPy.sign failed for host {host} variant {acct[:30]}: {e}")
                     continue
 
                 headers = self.headers.copy()
@@ -184,38 +210,47 @@ class MobileFlowFlexible:
                     'x-ladon': signature.get('x-ladon', ''),
                 })
 
+                # تعديل الرابط ليكون email بدل mobile
                 url = f"https://{host}/passport/account_lookup/email/"
                 try:
                     resp = await asyncio.to_thread(self.session.post, url, params=params, headers=headers, timeout=timeout_per_host)
                     try:
                         j = resp.json()
                     except ValueError:
+                        print(f"[{host}] non-json response (truncated): {resp.text[:300]}")
                         continue
 
                     if resp.status_code != 200:
+                        print(f"[{host}] status {resp.status_code} -> {json.dumps(j)[:400]}")
                         continue
 
                     accounts = j.get('data', {}).get('accounts', [])
                     if not accounts:
+                        print(f"[{host}] no accounts -> {json.dumps(j)[:400]}")
                         continue
 
                     first = accounts[0]
                     ticket = first.get('passport_ticket') or first.get('not_login_ticket') or None
                     username = first.get('user_name') or first.get('username') or None
+
+                    print(f"[{host}] response snippet: {json.dumps(j)[:800]}")
                     if ticket:
                         return ticket, acct, j
                     if username and not ticket:
                         return None, acct, j
 
                 except requests.RequestException as e:
+                    print(f"[{host}] request error: {e}")
                     continue
         return None, None, None
 
     async def send_code_using_ticket(self, passport_ticket: str, timeout_mailbox: int = 60):
-        mail_client = OneSecMail()
-        mail, login, domain = await mail_client.gen()
-        if not mail:
+        mail_client = MailTM()
+        mail, token = await mail_client.gen()
+        if not mail or not token:
+            print("[LOG] Failed to create mail.tm account.")
             return None, None
+        print("[LOG] Created disposable mail:", mail)
 
         params = self.base_params.copy()
         ts = int(time.time())
@@ -230,6 +265,7 @@ class MobileFlowFlexible:
         try:
             signature = SignerPy.sign(params=params)
         except Exception as e:
+            print("[LOG] SignerPy.sign failed for send_code:", e)
             return None, None
 
         headers = self.headers.copy()
@@ -249,18 +285,28 @@ class MobileFlowFlexible:
                 try:
                     j = resp.json()
                 except ValueError:
+                    print(f"[send_code {host}] non-json response (truncated): {resp.text[:300]}")
                     continue
 
+                print(f"[send_code {host}] response snippet: {json.dumps(j)[:800]}")
                 if j.get("message") == "success" or j.get("status") == "success":
-                    body = await mail_client.mailbox(login, domain, timeout=timeout_mailbox)
+                    body = await mail_client.mailbox(token, timeout=timeout_mailbox)
                     if not body:
+                        print("[LOG] No email arrived in mailbox (timeout).")
                         return None, mail
-                    # البحث عن اليوزر في الرسالة
-                    ree = re.search(r'username[:\s]+([A-Za-z0-9_\.]+)', body, re.IGNORECASE)
+                    ree = re.search(r'تم إنشاء هذا البريد الإلكتروني من أجل\s+(.+)\.', body)
                     if ree:
                         return ree.group(1).strip(), mail
+                    ree2 = re.search(r'username[:\s]+([A-Za-z0-9_\.]+)', body, re.IGNORECASE)
+                    if ree2:
+                        return ree2.group(1).strip(), mail
+                    print("[LOG] Email arrived but username not found. Body (trimmed):")
+                    print(body[:2000])
                     return None, mail
+                else:
+                    continue
             except requests.RequestException as e:
+                print(f"[LOG] send_code request error for host {host}: {e}")
                 continue
         return None, mail
 
@@ -275,15 +321,59 @@ def extract():
     timeout_mailbox = int(request.args.get("timeout_mailbox", "60"))
 
     email = unquote(raw_email).replace(" ", "").strip()
+    print(f"[LOG] استعلام جديد بالإيميل: {email}")
+
     flow = MobileFlowFlexible(account_param=email)
 
     async def run_flow():
-        ticket, used_variant, resp_json = await flow.find_passport_ticket()
-        if not ticket:
-            return {"input": email, "status": "not_found"}
+        try:
+            ticket, used_variant, resp_json = await flow.find_passport_ticket()
+        except Exception as e:
+            print(f"[LOG] خطأ أثناء البحث عن passport_ticket: {e}")
+            return {
+                "input": email,
+                "status": "error",
+                "message": "خطأ أثناء الاتصال بـ TikTok API",
+                "username": None,
+                "passport_ticket": None,
+                "mail_used": None,
+                "used_variant": None,
+                "raw_response_snippet": None,
+                "tiktokinfo": None
+            }
 
+        if not ticket:
+            print(f"[LOG] الإيميل {email} ما عليه يوزر أو لا توجد تذكرة")
+            return {
+                "input": email,
+                "status": "not_found",
+                "username": None,
+                "passport_ticket": None,
+                "mail_used": None,
+                "used_variant": used_variant,
+                "raw_response_snippet": None if resp_json is None else str(resp_json)[:500],
+                "tiktokinfo": None
+            }
+
+        print(f"[LOG] نجح استخراج التذكرة: {ticket}")
         username, mail_used = await flow.send_code_using_ticket(passport_ticket=ticket, timeout_mailbox=timeout_mailbox)
-        status_final = "success" if username else "no_username"
+
+        if username:
+            print(f"[LOG] استخرجنا اليوزر: {username} باستخدام البريد {mail_used}")
+            status_final = "success"
+        else:
+            print(f"[LOG] ما قدرنا نطلع يوزر للبريد {mail_used}")
+            status_final = "no_username"
+
+        tiktokinfo = None
+        if username:
+            try:
+                resp = requests.get(f"https://leakmrjoj.in/707/tik1.php?username={username}", timeout=5, proxies=flow.session.proxies)
+                tiktokinfo = resp.json()
+            except:
+                tiktokinfo = {
+                    "message": "User information is not available, please try again."
+                }
 
         return {
             "input": email,
@@ -291,7 +381,9 @@ def extract():
             "username": username,
             "passport_ticket": ticket,
             "mail_used": mail_used,
-            "used_variant": used_variant
+            "used_variant": used_variant,
+            "raw_response_snippet": None if resp_json is None else str(resp_json)[:500],
+            "tiktokinfo": tiktokinfo
         }
 
     result = asyncio.run(run_flow())
